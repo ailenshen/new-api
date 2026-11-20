@@ -1,0 +1,100 @@
+name: Deploy Production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'ailenshen/new-api'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.4"
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Build web
+        run: |
+          cd web
+          bun install --frozen-lockfile
+          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$(cat ../VERSION)" bun run build
+
+      - name: Build binary (linux/arm64)
+        run: |
+          mkdir -p dist
+          GOWORK=off go mod download
+          PGO_FILE="$(GOWORK=off go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo"
+          CGO_ENABLED=0 GOWORK=off GOOS=linux GOARCH=arm64 GOEXPERIMENT=greenteagc \
+            go build -pgo="$PGO_FILE" \
+            -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" \
+            -o dist/new-api .
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Upload binary and unit file
+        run: |
+          rsync -az -e "ssh -i ~/.ssh/id_ed25519" dist/new-api "root@${{ secrets.DEPLOY_HOST }}:/opt/new-api/new-api.new"
+          rsync -az -e "ssh -i ~/.ssh/id_ed25519" deploy/systemd/new-api.service "root@${{ secrets.DEPLOY_HOST }}:/etc/systemd/system/new-api.service.new"
+
+      - name: Swap binary, reload systemd, restart, health check
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "root@${{ secrets.DEPLOY_HOST }}" bash -s <<'EOF'
+            set -euo pipefail
+            if ! cmp -s /etc/systemd/system/new-api.service.new /etc/systemd/system/new-api.service 2>/dev/null; then
+              mv /etc/systemd/system/new-api.service.new /etc/systemd/system/new-api.service
+              systemctl daemon-reload
+            else
+              rm -f /etc/systemd/system/new-api.service.new
+            fi
+            chown new-api:new-api /opt/new-api/new-api.new
+            chmod 755 /opt/new-api/new-api.new
+            mv /opt/new-api/new-api.new /opt/new-api/new-api
+            systemctl restart new-api
+            for i in $(seq 1 15); do
+              if curl -fsS http://127.0.0.1:3000/api/status | grep -q '"success":true'; then
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "::error::new-api health check failed after restart"
+            journalctl -u new-api -n 30 --no-pager
+            exit 1
+          EOF
+
+      - name: Publish nginx config
+        run: |
+          rsync -az -e "ssh -i ~/.ssh/id_ed25519" deploy/nginx/token.truestlens.com.conf "root@${{ secrets.DEPLOY_HOST }}:/etc/nginx/sites-available/token.truestlens.com.new"
+          ssh -i ~/.ssh/id_ed25519 "root@${{ secrets.DEPLOY_HOST }}" bash -s <<'EOF'
+            set -euo pipefail
+            cd /etc/nginx
+            if [ -f sites-available/token.truestlens.com ]; then
+              cp -L sites-available/token.truestlens.com sites-available/token.truestlens.com.prev
+            fi
+            mv sites-available/token.truestlens.com.new sites-available/token.truestlens.com
+            ln -sfn /etc/nginx/sites-available/token.truestlens.com sites-enabled/token.truestlens.com
+            if ! nginx -t; then
+              if [ -f sites-available/token.truestlens.com.prev ]; then
+                cp sites-available/token.truestlens.com.prev sites-available/token.truestlens.com
+              fi
+              exit 1
+            fi
+            systemctl reload nginx
+          EOF
