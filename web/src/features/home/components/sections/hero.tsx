@@ -34,8 +34,6 @@ export function Hero(props: HeroProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
 
-  const systemName =
-    (status?.system_name as string | undefined)?.trim() || 'Truest Token'
   const rawBaseUrl =
     (status?.server_address as string | undefined)?.trim() ||
     (typeof window !== 'undefined' ? window.location.origin : '')
@@ -48,24 +46,22 @@ export function Hero(props: HeroProps) {
         props.className
       )}
     >
-      <div className='mx-auto flex w-full max-w-2xl flex-col items-center text-center'>
-        <span className='text-muted-foreground mb-5 text-xs font-medium tracking-[0.18em] uppercase'>
-          {systemName}
-        </span>
+      <div className='mx-auto flex w-full max-w-md flex-col items-center gap-6 text-center'>
+        {apiEndpoint && (
+          <div className='border-border bg-card flex w-full items-center justify-between gap-2 rounded-lg border px-4 py-3'>
+            <code className='text-foreground/85 truncate font-mono text-xs sm:text-sm'>
+              {apiEndpoint}
+            </code>
+            <CopyButton
+              value={apiEndpoint}
+              size='icon'
+              className='size-7'
+              iconClassName='size-3.5'
+            />
+          </div>
+        )}
 
-        <h1 className='text-foreground text-[clamp(2rem,4.5vw,3.125rem)] leading-[1.15] font-semibold tracking-tight'>
-          {t('Unified API Gateway for')}
-          <br />
-          <span className='text-primary'>{t('Vast Range of AI Models')}</span>
-        </h1>
-
-        <p className='text-muted-foreground mt-5 max-w-lg text-sm leading-relaxed md:text-base'>
-          {t(
-            'Access a vast selection of models via a standard, unified API protocol. Power AI applications, manage digital assets, and connect the Future.'
-          )}
-        </p>
-
-        <div className='mt-8 flex flex-wrap items-center justify-center gap-3'>
+        <div className='flex flex-wrap items-center justify-center gap-3'>
           {props.isAuthenticated ? (
             <Button
               className='group h-10 px-5 text-sm font-medium'
@@ -93,20 +89,6 @@ export function Hero(props: HeroProps) {
             </>
           )}
         </div>
-
-        {apiEndpoint && (
-          <div className='border-border bg-card mt-10 flex w-full max-w-md items-center justify-between gap-2 rounded-lg border px-4 py-2.5'>
-            <code className='text-foreground/85 truncate font-mono text-xs sm:text-sm'>
-              {apiEndpoint}
-            </code>
-            <CopyButton
-              value={apiEndpoint}
-              size='icon'
-              className='size-7'
-              iconClassName='size-3.5'
-            />
-          </div>
-        )}
       </div>
     </section>
   )
