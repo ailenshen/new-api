@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -26,11 +28,20 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      - name: Resolve version
+        run: |
+          APP_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [ -z "$APP_VERSION" ]; then
+            APP_VERSION="$(git describe --tags --always)"
+          fi
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "Resolved APP_VERSION=$APP_VERSION"
+
       - name: Build web
         run: |
           cd web
           bun install --frozen-lockfile
-          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$(cat ../VERSION)" bun run build
+          DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION="$APP_VERSION" bun run build
 
       - name: Build binary (linux/arm64)
         run: |
@@ -39,7 +50,7 @@ jobs:
           PGO_FILE="$(GOWORK=off go list -m -f '{{.Dir}}' github.com/MoeForge/moejs)/default.pgo"
           CGO_ENABLED=0 GOWORK=off GOOS=linux GOARCH=arm64 GOEXPERIMENT=greenteagc \
             go build -pgo="$PGO_FILE" \
-            -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$(cat VERSION)'" \
+            -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$APP_VERSION'" \
             -o dist/new-api .
 
       - name: Set up SSH
