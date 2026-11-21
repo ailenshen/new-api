@@ -62,23 +62,14 @@ jobs:
 
       - name: Upload binary and unit file
         run: |
-          rsync -az -e "ssh -i ~/.ssh/id_ed25519" dist/new-api "root@${{ secrets.DEPLOY_HOST }}:/opt/new-api/new-api.new"
-          rsync -az -e "ssh -i ~/.ssh/id_ed25519" deploy/systemd/new-api.service "root@${{ secrets.DEPLOY_HOST }}:/etc/systemd/system/new-api.service.new"
+          rsync -az -e "ssh -i ~/.ssh/id_ed25519" dist/new-api "deploy@${{ secrets.DEPLOY_HOST }}:/opt/new-api/new-api.new"
+          rsync -az -e "ssh -i ~/.ssh/id_ed25519" deploy/systemd/new-api.service "deploy@${{ secrets.DEPLOY_HOST }}:/opt/new-api/new-api.service.new"
 
       - name: Swap binary, reload systemd, restart, health check
         run: |
-          ssh -i ~/.ssh/id_ed25519 "root@${{ secrets.DEPLOY_HOST }}" bash -s <<'EOF'
+          ssh -i ~/.ssh/id_ed25519 "deploy@${{ secrets.DEPLOY_HOST }}" bash -s <<'EOF'
             set -euo pipefail
-            if ! cmp -s /etc/systemd/system/new-api.service.new /etc/systemd/system/new-api.service 2>/dev/null; then
-              mv /etc/systemd/system/new-api.service.new /etc/systemd/system/new-api.service
-              systemctl daemon-reload
-            else
-              rm -f /etc/systemd/system/new-api.service.new
-            fi
-            chown new-api:new-api /opt/new-api/new-api.new
-            chmod 755 /opt/new-api/new-api.new
-            mv /opt/new-api/new-api.new /opt/new-api/new-api
-            systemctl restart new-api
+            sudo /usr/local/sbin/deploy-new-api swap-and-restart
             for i in $(seq 1 15); do
               if curl -fsS http://127.0.0.1:3000/api/status | grep -q '"success":true'; then
                 exit 0
@@ -86,26 +77,11 @@ jobs:
               sleep 2
             done
             echo "::error::new-api health check failed after restart"
-            journalctl -u new-api -n 30 --no-pager
+            sudo /usr/local/sbin/deploy-new-api logs
             exit 1
           EOF
 
       - name: Publish nginx config
         run: |
-          rsync -az -e "ssh -i ~/.ssh/id_ed25519" deploy/nginx/token.truestlens.com.conf "root@${{ secrets.DEPLOY_HOST }}:/etc/nginx/sites-available/token.truestlens.com.new"
-          ssh -i ~/.ssh/id_ed25519 "root@${{ secrets.DEPLOY_HOST }}" bash -s <<'EOF'
-            set -euo pipefail
-            cd /etc/nginx
-            if [ -f sites-available/token.truestlens.com ]; then
-              cp -L sites-available/token.truestlens.com sites-available/token.truestlens.com.prev
-            fi
-            mv sites-available/token.truestlens.com.new sites-available/token.truestlens.com
-            ln -sfn /etc/nginx/sites-available/token.truestlens.com sites-enabled/token.truestlens.com
-            if ! nginx -t; then
-              if [ -f sites-available/token.truestlens.com.prev ]; then
-                cp sites-available/token.truestlens.com.prev sites-available/token.truestlens.com
-              fi
-              exit 1
-            fi
-            systemctl reload nginx
-          EOF
+          rsync -az -e "ssh -i ~/.ssh/id_ed25519" deploy/nginx/token.truestlens.com.conf "deploy@${{ secrets.DEPLOY_HOST }}:/opt/new-api/token.truestlens.com.nginx.new"
+          ssh -i ~/.ssh/id_ed25519 "deploy@${{ secrets.DEPLOY_HOST }}" 'sudo /usr/local/sbin/deploy-new-api publish-nginx'
